@@ -115,6 +115,31 @@
 |spring.cloud.gateway.metrics.enabled | `+++false+++` | Enables the collection of metrics data.
 |spring.cloud.gateway.metrics.prefix | `+++spring.cloud.gateway+++` | The prefix of all metrics emitted by gateway.
 |spring.cloud.gateway.metrics.tags |  | Tags map that added to metrics.
+|spring.cloud.gateway.mvc.form-filter.enabled | `+++true+++` | Enables the form-filter.
+|spring.cloud.gateway.mvc.forwarded-request-headers-filter.enabled | `+++true+++` | Enables the forwarded-request-headers-filter.
+|spring.cloud.gateway.mvc.http-client.connect-timeout |  | The HttpClient connect timeout.
+|spring.cloud.gateway.mvc.http-client.read-timeout |  | The HttpClient read timeout.
+|spring.cloud.gateway.mvc.http-client.ssl-bundle |  | The name of the SSL bundle to use.
+|spring.cloud.gateway.mvc.http-client.type |  | The HttpClient type. Defaults to JDK.
+|spring.cloud.gateway.mvc.remove-content-length-request-headers-filter.enabled | `+++true+++` | Enables the remove-content-length-request-headers-filter.
+|spring.cloud.gateway.mvc.remove-hop-by-hop-request-headers-filter.enabled | `+++true+++` | Enables the forwarded-request-headers-filter.
+|spring.cloud.gateway.mvc.remove-hop-by-hop-response-headers-filter.enabled | `+++true+++` | Enables the forwarded-request-headers-filter.
+|spring.cloud.gateway.mvc.routes |  | List of Routes.
+|spring.cloud.gateway.mvc.routes-map |  | Map of Routes.
+|spring.cloud.gateway.mvc.transfer-encoding-normalization-request-headers-filter.enabled | `+++true+++` | Enables the transfer-encoding-normalization-request-headers-filter.
+|spring.cloud.gateway.mvc.weight-calculator-filter.enabled | `+++true+++` | Enables the weight-calculator-filter.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.enabled | `+++true+++` | If the XForwardedHeadersFilter is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.for-append | `+++true+++` | If appending X-Forwarded-For as a list is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.for-enabled | `+++true+++` | If X-Forwarded-For is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.host-append | `+++true+++` | If appending X-Forwarded-Host as a list is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.host-enabled | `+++true+++` | If X-Forwarded-Host is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.order | `+++0+++` | The order of the XForwardedHeadersFilter.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.port-append | `+++true+++` | If appending X-Forwarded-Port as a list is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.port-enabled | `+++true+++` | If X-Forwarded-Port is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.prefix-append | `+++true+++` | If appending X-Forwarded-Prefix as a list is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.prefix-enabled | `+++true+++` | If X-Forwarded-Prefix is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.proto-append | `+++true+++` | If appending X-Forwarded-Proto as a list is enabled.
+|spring.cloud.gateway.mvc.x-forwarded-request-headers-filter.proto-enabled | `+++true+++` | If X-Forwarded-Proto is enabled.
 |spring.cloud.gateway.observability.enabled | `+++true+++` | If Micrometer Observability support should be turned on.
 |spring.cloud.gateway.predicate.after.enabled | `+++true+++` | Enables the after predicate.
 |spring.cloud.gateway.predicate.before.enabled | `+++true+++` | Enables the before predicate.
@@ -123,6 +148,7 @@
 |spring.cloud.gateway.predicate.cookie.enabled | `+++true+++` | Enables the cookie predicate.
 |spring.cloud.gateway.predicate.header.enabled | `+++true+++` | Enables the header predicate.
 |spring.cloud.gateway.predicate.host.enabled | `+++true+++` | Enables the host predicate.
+|spring.cloud.gateway.predicate.host.include-port | `+++true+++` | Include the port in matching the host name.
 |spring.cloud.gateway.predicate.method.enabled | `+++true+++` | Enables the method predicate.
 |spring.cloud.gateway.predicate.path.enabled | `+++true+++` | Enables the path predicate.
 |spring.cloud.gateway.predicate.query.enabled | `+++true+++` | Enables the query predicate.
@@ -136,7 +162,9 @@
 |spring.cloud.gateway.redis-rate-limiter.remaining-header | `+++X-RateLimit-Remaining+++` | The name of the header that returns number of remaining requests during the current second.
 |spring.cloud.gateway.redis-rate-limiter.replenish-rate-header | `+++X-RateLimit-Replenish-Rate+++` | The name of the header that returns the replenish rate configuration.
 |spring.cloud.gateway.redis-rate-limiter.requested-tokens-header | `+++X-RateLimit-Requested-Tokens+++` | The name of the header that returns the requested tokens configuration.
+|spring.cloud.gateway.redis-route-definition-repository.enabled | `+++true+++` | If RedisRouteDefinitionRepository should be enabled.
 |spring.cloud.gateway.restrictive-property-accessor.enabled | `+++true+++` | Restricts method and property access in SpEL.
+|spring.cloud.gateway.route-refresh-listener.enabled | `+++true+++` | If RouteRefreshListener should be turned on.
 |spring.cloud.gateway.routes |  | List of Routes.
 |spring.cloud.gateway.set-status.original-status-header-name |  | The name of the header which contains http code of the proxied request.
 |spring.cloud.gateway.streaming-media-types |  | 

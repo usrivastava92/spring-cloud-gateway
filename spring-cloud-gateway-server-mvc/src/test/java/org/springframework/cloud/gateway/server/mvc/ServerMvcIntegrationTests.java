@@ -16,6 +16,9 @@
 
 package org.springframework.cloud.gateway.server.mvc;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -30,8 +33,15 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.caffeine.CaffeineProxyManager;
 import io.github.bucket4j.distributed.proxy.AsyncProxyManager;
 import io.github.bucket4j.distributed.remote.RemoteBucketState;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,9 +51,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.cloud.gateway.server.mvc.common.MvcUtils;
+import org.springframework.cloud.gateway.server.mvc.filter.FormFilter;
 import org.springframework.cloud.gateway.server.mvc.filter.ForwardedRequestHeadersFilter;
 import org.springframework.cloud.gateway.server.mvc.filter.XForwardedRequestHeadersFilter;
+import org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates;
 import org.springframework.cloud.gateway.server.mvc.test.HttpbinTestcontainers;
 import org.springframework.cloud.gateway.server.mvc.test.HttpbinUriResolver;
 import org.springframework.cloud.gateway.server.mvc.test.LocalServerPortUriResolver;
@@ -51,9 +64,11 @@ import org.springframework.cloud.gateway.server.mvc.test.TestLoadBalancerConfig;
 import org.springframework.cloud.gateway.server.mvc.test.client.TestRestClient;
 import org.springframework.cloud.loadbalancer.annotation.LoadBalancerClient;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.RequestEntity;
@@ -62,6 +77,7 @@ import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.util.StreamUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -89,7 +105,7 @@ import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFu
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.fallbackHeaders;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.mapRequestHeader;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.modifyRequestBody;
-import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.preserveHost;
+import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.preserveHostHeader;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.removeRequestParameter;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.requestHeaderSize;
 import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.requestHeaderToRequestUri;
@@ -117,6 +133,7 @@ import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequ
 import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.cookie;
 import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.header;
 import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.host;
+import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.query;
 import static org.springframework.cloud.gateway.server.mvc.predicate.GatewayRequestPredicates.readBody;
 import static org.springframework.cloud.gateway.server.mvc.test.TestUtils.getMap;
 import static org.springframework.http.MediaType.APPLICATION_FORM_URLENCODED;
@@ -190,12 +207,32 @@ public class ServerMvcIntegrationTests {
 	}
 
 	@Test
-	public void stripPathWorks() {
+	public void setPathPostWorks() {
+		restClient.post().uri("/mycustompathpost").bodyValue("hello").header("Host", "www.setpathpost.org").exchange()
+				.expectStatus().isOk().expectBody(Map.class).consumeWith(res -> {
+					Map<String, Object> map = res.getResponseBody();
+					assertThat(map).containsEntry("data", "hello");
+				});
+	}
+
+	@Test
+	public void stripPrefixWorks() {
 		restClient.get().uri("/long/path/to/get").exchange().expectStatus().isOk().expectBody(Map.class)
 				.consumeWith(res -> {
 					Map<String, Object> map = res.getResponseBody();
 					Map<String, Object> headers = getMap(map, "headers");
 					assertThat(headers).containsEntry("X-Test", "stripPrefix");
+				});
+	}
+
+	@Test
+	public void stripPrefixPostWorks() {
+		restClient.post().uri("/long/path/to/post").bodyValue("hello").header("Host", "www.stripprefixpost.org")
+				.exchange().expectStatus().isOk().expectBody(Map.class).consumeWith(res -> {
+					Map<String, Object> map = res.getResponseBody();
+					assertThat(map).containsEntry("data", "hello");
+					Map<String, Object> headers = getMap(map, "headers");
+					assertThat(headers).containsEntry("X-Test", "stripPrefixPost");
 				});
 	}
 
@@ -269,6 +306,16 @@ public class ServerMvcIntegrationTests {
 	}
 
 	@Test
+	public void circuitBreakerInvalidFallbackThrowsException() {
+		// @formatter:off
+		Assertions.assertThatThrownBy(() -> route("testcircuitbreakergatewayfallback")
+				.route(path("/anything/circuitbreakergatewayfallback"), http(URI.create("https://nonexistantdomain.com1234")))
+				.filter(circuitBreaker("mycb2", URI.create("http://example.com")))
+				.build()).isInstanceOf(IllegalArgumentException.class);
+		// @formatter:on
+	}
+
+	@Test
 	public void retryWorks() {
 		restClient.get().uri("/retry?key=get").exchange().expectStatus().isOk().expectBody(String.class).isEqualTo("3");
 		// test for: java.lang.IllegalArgumentException: You have already selected another
@@ -312,6 +359,28 @@ public class ServerMvcIntegrationTests {
 					Map<String, Object> map = res.getResponseBody();
 					Map<String, Object> headers = getMap(map, "headers");
 					assertThat(headers).containsEntry("X-Test", "rewritepath");
+				});
+	}
+
+	@Test
+	public void rewritePathPostWorks() {
+		restClient.post().uri("/baz/post").bodyValue("hello").header("Host", "www.rewritepathpost.org").exchange()
+				.expectStatus().isOk().expectBody(Map.class).consumeWith(res -> {
+					Map<String, Object> map = res.getResponseBody();
+					assertThat(map).containsEntry("data", "hello");
+					Map<String, Object> headers = getMap(map, "headers");
+					assertThat(headers).containsEntry("X-Test", "rewritepathpost");
+				});
+	}
+
+	@Test
+	public void rewritePathPostLocalWorks() {
+		restClient.post().uri("/baz/post").bodyValue("hello").header("Host", "www.rewritepathpostlocal.org").exchange()
+				.expectStatus().isOk().expectBody(Map.class).consumeWith(res -> {
+					Map<String, Object> map = res.getResponseBody();
+					assertThat(map).containsEntry("data", "hello");
+					Map<String, Object> headers = getMap(map, "headers");
+					assertThat(headers).containsEntry("x-test", "rewritepathpostlocal");
 				});
 	}
 
@@ -385,7 +454,7 @@ public class ServerMvcIntegrationTests {
 		MultiValueMap<String, HttpEntity<?>> formData = createMultipartData();
 		// @formatter:off
 		restClient.post().uri("/post").contentType(MULTIPART_FORM_DATA)
-				.header("test", "form")
+				.header("Host", "www.testform.org")
 				.bodyValue(formData)
 				.exchange()
 				.expectStatus().isOk()
@@ -400,7 +469,7 @@ public class ServerMvcIntegrationTests {
 	void multipartFormDataRestTemplateWorks() {
 		MultiValueMap<String, HttpEntity<?>> formData = createMultipartData();
 		RequestEntity<MultiValueMap<String, HttpEntity<?>>> request = RequestEntity.post("/post")
-				.contentType(MULTIPART_FORM_DATA).header("test", "form").body(formData);
+				.contentType(MULTIPART_FORM_DATA).header("Host", "www.testform.org").body(formData);
 		ResponseEntity<Map> response = restTemplate.exchange(request, Map.class);
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertMultipartData(response.getBody());
@@ -483,6 +552,15 @@ public class ServerMvcIntegrationTests {
 	public void removeRequestParameterWorks() {
 		restClient.get().uri("/anything/removerequestparameter?foo=bar").header("test", "removerequestparam").exchange()
 				.expectStatus().isOk().expectHeader().doesNotExist("foo");
+	}
+
+	@Test
+	public void removeRequestParameterPostWorks() {
+		restClient.post().uri("/post?foo=bar").bodyValue("hello").header("Host", "www.removerequestparampost.org")
+				.exchange().expectStatus().isOk().expectHeader().doesNotExist("foo").expectBody(Map.class)
+				.consumeWith(res -> {
+					assertThat(res.getResponseBody()).containsEntry("data", "hello");
+				});
 	}
 
 	@Test
@@ -593,6 +671,43 @@ public class ServerMvcIntegrationTests {
 				.isEqualTo("hello2");
 	}
 
+	@Test
+	@SuppressWarnings("rawtypes")
+	public void queryParamWorks() {
+		restClient.get().uri("/get?foo=bar").exchange().expectStatus().isOk().expectBody(Map.class)
+				.consumeWith(result -> {
+					Map responseBody = result.getResponseBody();
+					assertThat(responseBody).containsKey("args");
+					Map args = getMap(responseBody, "args");
+					assertThat(args).containsKey("foo");
+					assertThat(args.get("foo")).isEqualTo("bar");
+				});
+	}
+
+	@SuppressWarnings("rawtypes")
+	@Test
+	public void queryParamWithSpecialCharactersWorks() {
+		restClient.get().uri("/get?myparam= &intlparam=æøå").exchange().expectStatus().isOk().expectBody(Map.class)
+				.consumeWith(result -> {
+					Map responseBody = result.getResponseBody();
+					assertThat(responseBody).containsKey("args");
+					Map args = getMap(responseBody, "args");
+					assertThat(args).containsKey("myparam");
+					assertThat(args.get("myparam")).isEqualTo(" ");
+					assertThat(args).containsKey("intlparam");
+					assertThat(args.get("intlparam")).isEqualTo("æøå");
+				});
+	}
+
+	@Test
+	public void clientResponseBodyAttributeWorks() {
+		restClient.get().uri("/anything/readresponsebody").header("X-Foo", "fooval").exchange().expectStatus().isOk()
+				.expectBody(Map.class).consumeWith(res -> {
+					Map<String, Object> headers = getMap(res.getResponseBody(), "headers");
+					assertThat(headers).containsEntry("X-Foo", "FOOVAL");
+				});
+	}
+
 	@SpringBootConfiguration
 	@EnableAutoConfiguration
 	@LoadBalancerClient(name = "httpbin", configuration = TestLoadBalancerConfig.Httpbin.class)
@@ -679,6 +794,17 @@ public class ServerMvcIntegrationTests {
 		}
 
 		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsSetPathPost() {
+			// @formatter:off
+			return route("testsetpath")
+					.route(POST("/mycustompath{extra}").and(host("**.setpathpost.org")), http())
+					.filter(new HttpbinUriResolver())
+					.filter(setPath("/{extra}"))
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
 		public RouterFunction<ServerResponse> gatewayRouterFunctionsStripPrefix() {
 			// @formatter:off
 			return route(GET("/long/path/to/get"), http())
@@ -686,6 +812,18 @@ public class ServerMvcIntegrationTests {
 					.filter(stripPrefix(3))
 					.filter(addRequestHeader("X-Test", "stripPrefix"))
 					.withAttribute(MvcUtils.GATEWAY_ROUTE_ID_ATTR, "teststripprefix");
+			// @formatter:on
+		}
+
+		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsStripPrefixPost() {
+			// @formatter:off
+			return route("teststripprefixpost")
+					.route(POST("/long/path/to/post").and(host("**.stripprefixpost.org")), http())
+					.filter(new HttpbinUriResolver())
+					.filter(stripPrefix(3))
+					.filter(addRequestHeader("X-Test", "stripPrefixPost"))
+					.build();
 			// @formatter:on
 		}
 
@@ -724,9 +862,9 @@ public class ServerMvcIntegrationTests {
 		public RouterFunction<ServerResponse> gatewayRouterFunctionsHost() {
 			// @formatter:off
 			return route("testhostpredicate")
-					.route(host("{sub}.myjavadslhost.com").and(path("/anything/hostpredicate")), http())
+					.route(host("{sub}.somehotherhost.com", "{sub}.myjavadslhost.com").and(path("/anything/hostpredicate")), http())
 					.before(new HttpbinUriResolver())
-					.before(preserveHost())
+					.before(preserveHostHeader())
 					.after(addResponseHeader("X-SubDomain", "{sub}"))
 					.build();
 			// @formatter:on
@@ -747,7 +885,7 @@ public class ServerMvcIntegrationTests {
 			// @formatter:off
 			return route("testcircuitbreakergatewayfallback")
 					.route(path("/anything/circuitbreakergatewayfallback"), http(URI.create("https://nonexistantdomain.com1234")))
-					.filter(circuitBreaker("mycb2", "/anything/gatewayfallback"))
+					.filter(circuitBreaker("mycb2", URI.create("forward:/anything/gatewayfallback")))
 					.build()
 				.and(route("testgatewayfallback")
 					.route(path("/anything/gatewayfallback"), http())
@@ -762,7 +900,8 @@ public class ServerMvcIntegrationTests {
 			// @formatter:off
 			return route(path("/anything/circuitbreakernofallback"), http())
 					.filter(new HttpbinUriResolver())
-					.filter(circuitBreaker("mycb3", null))
+					.filter(circuitBreaker("mycb3"))
+					//.filter(circuitBreaker(config -> config.setId("myCircuitBreaker").setFallbackUri("forward:/inCaseOfFailureUseThis").setStatusCodes("500", "NOT_FOUND")))
 					.filter(setPath("/delay/5"))
 					.withAttribute(MvcUtils.GATEWAY_ROUTE_ID_ATTR, "testcircuitbreakernofallback");
 			// @formatter:on
@@ -775,6 +914,7 @@ public class ServerMvcIntegrationTests {
 					.route(path("/retry"), http())
 					.before(new LocalServerPortUriResolver())
 					.filter(retry(3))
+					//.filter(retry(config -> config.setRetries(3).setSeries(Set.of(HttpStatus.Series.SERVER_ERROR)).setMethods(Set.of(HttpMethod.GET, HttpMethod.POST))))
 					.filter(prefixPath("/do"))
 					.build();
 			// @formatter:on
@@ -789,6 +929,9 @@ public class ServerMvcIntegrationTests {
 					.filter(rateLimit(c -> c.setCapacity(1)
 							.setPeriod(Duration.ofMinutes(1))
 							.setKeyResolver(request -> "ratelimitttest1min")))
+					/*.filter(rateLimit(c -> c.setCapacity(100)
+							.setPeriod(Duration.ofMinutes(1))
+							.setKeyResolver(request -> request.servletRequest().getUserPrincipal().getName())))*/
 					.withAttribute(MvcUtils.GATEWAY_ROUTE_ID_ATTR, "testratelimit");
 			// @formatter:on
 		}
@@ -806,7 +949,7 @@ public class ServerMvcIntegrationTests {
 		@Bean
 		public RouterFunction<ServerResponse> gatewayRouterFunctionsCookiePredicate() {
 			// @formatter:off
-			return route(path("/cookieregex").and(cookie("mycookie", "fo.")), http())
+			return route(GatewayRequestPredicates.path("/dummypath", "/cookieregex").and(cookie("mycookie", "fo.")), http())
 					.filter(new HttpbinUriResolver())
 					.filter(setPath("/headers"))
 					.withAttribute(MvcUtils.GATEWAY_ROUTE_ID_ATTR, "testcookiepredicate");
@@ -825,6 +968,30 @@ public class ServerMvcIntegrationTests {
 		}
 
 		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsRewritePathPost() {
+			// @formatter:off
+			return route("testrewritepathpost")
+					.route(POST("/baz/**").and(host("**.rewritepathpost.org")), http())
+					.filter(new HttpbinUriResolver())
+					.filter(rewritePath("/baz/(?<segment>.*)", "/${segment}"))
+					.filter(addRequestHeader("X-Test", "rewritepathpost"))
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsRewritePathPostLocal() {
+			// @formatter:off
+			return route("testrewritepathpostlocal")
+					.route(POST("/baz/**").and(host("**.rewritepathpostlocal.org")), http())
+					.before(new LocalServerPortUriResolver())
+					.filter(rewritePath("/baz/(?<segment>.*)", "/test/${segment}"))
+					.filter(addRequestHeader("X-Test", "rewritepathpostlocal"))
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
 		public RouterFunction<ServerResponse> gatewayRouterFunctionsForwardedHeaders() {
 			// @formatter:off
 			return route(path("/headers").and(header("test", "forwarded")), http())
@@ -838,7 +1005,7 @@ public class ServerMvcIntegrationTests {
 		public RouterFunction<ServerResponse> gatewayRouterFunctionsForm() {
 			// @formatter:off
 			return route("testform")
-					.POST("/post", header("test", "form"), http())
+					.POST("/post", host("**.testform.org"), http())
 					.before(new LocalServerPortUriResolver())
 					.filter(prefixPath("/test"))
 					.filter(addRequestHeader("X-Test", "form"))
@@ -933,6 +1100,17 @@ public class ServerMvcIntegrationTests {
 			// @formatter:off
 			return route("removerequestparam")
 					.route(header("test", "removerequestparam"), http())
+					.filter(new HttpbinUriResolver())
+					.before(removeRequestParameter("foo"))
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsRemoveRequestParamPost() {
+			// @formatter:off
+			return route("removerequestparampost")
+					.route(host("www.removerequestparampost.org").and(POST("/post")), http())
 					.filter(new HttpbinUriResolver())
 					.before(removeRequestParameter("foo"))
 					.build();
@@ -1053,6 +1231,7 @@ public class ServerMvcIntegrationTests {
 					.before(new HttpbinUriResolver())
 					// reverse order for "post" filters
 					.after(rewriteLocationResponseHeader())
+					//.after(rewriteLocationResponseHeader(config -> config.setLocationHeaderName("Location").setStripVersion(RewriteLocationResponseHeaderFilterFunctions.StripVersion.AS_IN_REQUEST)))
 					.after(addResponseHeader("Location", "https://backend.org:443/v1/some/object/id"))
 					.build();
 			// @formatter:on
@@ -1112,6 +1291,48 @@ public class ServerMvcIntegrationTests {
 			// @formatter:on
 		}
 
+		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsQuery() {
+			// @formatter:off
+			return route("testqueryparam")
+					.route(query("foo", "bar"), http())
+					.before(new HttpbinUriResolver())
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
+		public RouterFunction<ServerResponse> gatewayRouterFunctionsReadResponseBody() {
+			// @formatter:off
+			return route("testClientResponseBodyAttribute")
+					.GET("/anything/readresponsebody", http())
+					.before(new HttpbinUriResolver())
+					.after((request, response) -> {
+						Object o = request.attributes().get(MvcUtils.CLIENT_RESPONSE_INPUT_STREAM_ATTR);
+						if (o instanceof InputStream) {
+							try {
+								byte[] bytes = StreamUtils.copyToByteArray((InputStream) o);
+								String s = new String(bytes, StandardCharsets.UTF_8);
+								String replace = s.replace("fooval", "FOOVAL");
+								ByteArrayInputStream bais = new ByteArrayInputStream(replace.getBytes());
+								request.attributes().put(MvcUtils.CLIENT_RESPONSE_INPUT_STREAM_ATTR, bais);
+							}
+							catch (IOException e) {
+								throw new RuntimeException(e);
+							}
+						}
+						return response;
+					})
+					.build();
+			// @formatter:on
+		}
+
+		@Bean
+		public FilterRegistrationBean myFilter() {
+			FilterRegistrationBean<MyFilter> reg = new FilterRegistrationBean<>(new MyFilter());
+			return reg;
+		}
+
 		private Predicate<Event> eventPredicate(String foo) {
 			return new Predicate<>() {
 				@Override
@@ -1124,6 +1345,38 @@ public class ServerMvcIntegrationTests {
 					return "Event.foo == " + foo;
 				}
 			};
+		}
+
+	}
+
+	private static class MyFilter implements Filter, Ordered {
+
+		@Override
+		public int getOrder() {
+			return FormFilter.FORM_FILTER_ORDER - 1;
+		}
+
+		@Override
+		public void doFilter(ServletRequest request, ServletResponse response, FilterChain filterChain)
+				throws IOException, ServletException {
+			if (isFormPost((HttpServletRequest) request)) {
+				// test for formUrlencodedWorks and
+				// https://github.com/spring-cloud/spring-cloud-gateway/issues/3244
+				assertThat(request.getParameter("foo")).isEqualTo("fooquery");
+				assertThat(request.getParameter("foo")).isEqualTo("fooquery");
+			}
+			filterChain.doFilter(request, response);
+
+			if (isFormPost((HttpServletRequest) request)) {
+				assertThat(request.getParameter("foo")).isEqualTo("fooquery");
+				assertThat(request.getParameter("foo")).isEqualTo("fooquery");
+			}
+		}
+
+		static boolean isFormPost(HttpServletRequest request) {
+			String contentType = request.getContentType();
+			return (contentType != null && contentType.contains(MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+					&& HttpMethod.POST.matches(request.getMethod()));
 		}
 
 	}

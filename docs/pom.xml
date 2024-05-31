@@ -6,7 +6,7 @@
 	<parent>
 		<groupId>org.springframework.cloud</groupId>
 		<artifactId>spring-cloud-gateway</artifactId>
-		<version>4.1.0-SNAPSHOT</version>
+		<version>4.1.5-SNAPSHOT</version>
 	</parent>
 	<artifactId>spring-cloud-gateway-docs</artifactId>
 	<packaging>jar</packaging>
@@ -29,6 +29,10 @@
 		<dependency>
 			<groupId>${project.groupId}</groupId>
 			<artifactId>spring-cloud-starter-gateway</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>${project.groupId}</groupId>
+			<artifactId>spring-cloud-starter-gateway-mvc</artifactId>
 		</dependency>
 	</dependencies>
 	<build>

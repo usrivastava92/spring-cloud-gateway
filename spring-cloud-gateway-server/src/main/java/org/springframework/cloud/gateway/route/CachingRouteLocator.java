@@ -26,6 +26,7 @@ import org.apache.commons.logging.LogFactory;
 import reactor.cache.CacheFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
 
 import org.springframework.cloud.gateway.event.RefreshRoutesEvent;
 import org.springframework.cloud.gateway.event.RefreshRoutesResultEvent;
@@ -88,27 +89,28 @@ public class CachingRouteLocator
 						.onErrorResume(s -> Mono.just(List.of()));
 
 				scopedRoutes.subscribe(scopedRoutesList -> {
-					Flux.concat(Flux.fromIterable(scopedRoutesList), getNonScopedRoutes(event))
-							.sort(AnnotationAwareOrderComparator.INSTANCE).materialize().collect(Collectors.toList())
-							.subscribe(signals -> {
-								applicationEventPublisher.publishEvent(new RefreshRoutesResultEvent(this));
-								cache.put(CACHE_KEY, signals);
-							}, this::handleRefreshError);
+					updateCache(Flux.concat(Flux.fromIterable(scopedRoutesList), getNonScopedRoutes(event))
+							.sort(AnnotationAwareOrderComparator.INSTANCE));
 				}, this::handleRefreshError);
 			}
 			else {
 				final Mono<List<Route>> allRoutes = fetch().collect(Collectors.toList());
-
-				allRoutes.subscribe(list -> Flux.fromIterable(list).materialize().collect(Collectors.toList())
-						.subscribe(signals -> {
-							applicationEventPublisher.publishEvent(new RefreshRoutesResultEvent(this));
-							cache.put(CACHE_KEY, signals);
-						}, this::handleRefreshError), this::handleRefreshError);
+				allRoutes.subscribe(list -> updateCache(Flux.fromIterable(list)), this::handleRefreshError);
 			}
 		}
 		catch (Throwable e) {
 			handleRefreshError(e);
 		}
+	}
+
+	private synchronized void updateCache(Flux<Route> routes) {
+		routes.materialize().collect(Collectors.toList()).subscribe(this::publishRefreshEvent,
+				this::handleRefreshError);
+	}
+
+	private void publishRefreshEvent(List<Signal<Route>> signals) {
+		cache.put(CACHE_KEY, signals);
+		applicationEventPublisher.publishEvent(new RefreshRoutesResultEvent(this));
 	}
 
 	private Flux<Route> getNonScopedRoutes(RefreshRoutesEvent scopedEvent) {
