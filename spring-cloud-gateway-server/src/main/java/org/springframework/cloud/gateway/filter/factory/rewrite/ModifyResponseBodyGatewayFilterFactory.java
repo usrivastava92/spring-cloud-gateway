@@ -287,13 +287,11 @@ public class ModifyResponseBodyGatewayFilterFactory
 					exchange.getResponse().getHeaders());
 			return bodyInserter.insert(outputMessage, new BodyInserterContext())
 					.then(Mono.defer(() -> {
-						Mono<DataBuffer> messageBody = writeBody(getDelegate(),
-								outputMessage, outClass);
+						Mono<DataBuffer> messageBody = writeBody(getDelegate(), outputMessage, outClass);
 						HttpHeaders headers = getDelegate().getHeaders();
 						if (!headers.containsKey(HttpHeaders.TRANSFER_ENCODING)
 								|| headers.containsKey(HttpHeaders.CONTENT_LENGTH)) {
-							messageBody = messageBody.doOnNext(data -> headers
-									.setContentLength(data.readableByteCount()));
+							messageBody = messageBody.doOnNext(data -> headers.setContentLength(data.readableByteCount()));
 						}
 
 						if (StringUtils.hasText(config.newContentType)) {
